@@ -1,4 +1,4 @@
--- ===================== Sekai Hub | Full Universal Script =====================
+-- ===================== Sekai Hub | Full Universal Script (Fly + ESP Fixed) =====================
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Window = Rayfield:CreateWindow({
@@ -10,6 +10,7 @@ local Window = Rayfield:CreateWindow({
     ToggleUIKeybind = "K"
 })
 
+-- ================== Services & Vars ==================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
@@ -21,7 +22,7 @@ local function notify(title, text, duration)
     Rayfield:Notify({Title=title, Content=text, Duration=duration or 3})
 end
 
--- ================= Player Features =================
+-- ================= Player Tab =================
 local MainTab = Window:CreateTab("🏡 Main", nil)
 MainTab:CreateSection("Player Features")
 
@@ -31,8 +32,8 @@ local jumpConnection
 local function setupInfiniteJump()
     if jumpConnection then jumpConnection:Disconnect() end
     jumpConnection = UIS.JumpRequest:Connect(function()
-        local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-        if infiniteJump and humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Jumping) end
+        local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        if infiniteJump and hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
     end)
 end
 MainTab:CreateButton({
@@ -46,265 +47,275 @@ MainTab:CreateButton({
 
 -- WalkSpeed
 local walkSpeed = 16
-local function updateWalkSpeed()
-    local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-    if humanoid then humanoid.WalkSpeed = walkSpeed end
-end
+local targetWalkSpeed = walkSpeed
+local function getHumanoid() return player.Character and player.Character:FindFirstChildOfClass("Humanoid") end
+RunService.Heartbeat:Connect(function(dt)
+    local hum = getHumanoid()
+    if hum then
+        hum.WalkSpeed = hum.WalkSpeed + (targetWalkSpeed - hum.WalkSpeed) * math.clamp(10*dt,0,1)
+    end
+end)
 MainTab:CreateSlider({
     Name = "⚡Speed",
     Range = {16,300},
     Increment = 1,
     Suffix = "Speed",
-    CurrentValue = 16,
-    Callback = function(value)
-        walkSpeed = value
-        updateWalkSpeed()
-    end
-})
-
--- JumpPower
-local jumpPower = 50
-local function updateJumpPower()
-    local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-    if humanoid then humanoid.JumpPower = jumpPower end
-end
-MainTab:CreateButton({
-    Name = "🚀JumpPower",
-    Callback = function()
-        jumpPower = (jumpPower==50) and 130 or 50
-        updateJumpPower()
-        notify("JumpPower", jumpPower==130 and "130 ON" or "50 OFF")
-    end
+    CurrentValue = walkSpeed,
+    Callback = function(v) targetWalkSpeed=v notify("WalkSpeed","Speed set to "..v) end
 })
 
 -- Noclip
-local noclip = false
-local noclipConnection
+local noclip=false
+local noclipConn
 MainTab:CreateButton({
-    Name = "🕳Noclip",
-    Callback = function()
+    Name="🕳Noclip",
+    Callback=function()
         noclip = not noclip
         if noclip then
-            noclipConnection = RunService.Stepped:Connect(function()
-                local char = player.Character
+            noclipConn=RunService.Stepped:Connect(function()
+                local char=player.Character
                 if char then
-                    for _, part in pairs(char:GetChildren()) do
-                        if part:IsA("BasePart") then part.CanCollide=false end
-                    end
+                    for _,p in pairs(char:GetChildren()) do if p:IsA("BasePart") then p.CanCollide=false end end
                 end
             end)
         else
-            if noclipConnection then noclipConnection:Disconnect() noclipConnection=nil end
+            if noclipConn then noclipConn:Disconnect() noclipConn=nil end
         end
-        notify("Noclip", noclip and "ON" or "OFF")
+        notify("Noclip",noclip and "ON" or "OFF")
     end
 })
 
--- Fly
-local flying = false
-local flySpeed = 80
-local hoverHeight = 2
+-- ================= Fly =================
+local flying=false
+local flySpeed=80
 local flyConn
+local jumpConn
+local jumpPressed=false
+
+MainTab:CreateSlider({
+    Name = "🕊 Fly Speed",
+    Range = {10,300},
+    Increment=1,
+    Suffix="Speed",
+    CurrentValue=flySpeed,
+    Callback=function(v) flySpeed=v end
+})
+
 local function getHRP() return player.Character and player.Character:FindFirstChild("HumanoidRootPart") end
-local function getHumanoid() return player.Character and player.Character:FindFirstChildOfClass("Humanoid") end
+
 local function startFly()
     if flying then return end
-    flying = true
-    flyConn = RunService.Heartbeat:Connect(function()
-        local hrp = getHRP()
-        local hum = getHumanoid()
-        if hrp and hum then
-            hum.PlatformStand=true
-            local dir = hum.MoveDirection
-            hrp.Velocity = Vector3.new(dir.X,0,dir.Z)*flySpeed + Vector3.new(0,hoverHeight,0)
-        end
-    end)
-    notify("Fly","ON")
-end
-local function stopFly()
-    flying=false
-    if flyConn then flyConn:Disconnect() flyConn=nil end
     local hrp = getHRP()
     local hum = getHumanoid()
-    if hrp then hrp.Velocity=Vector3.zero end
-    if hum then hum.PlatformStand=false end
-    notify("Fly","OFF")
-end
-MainTab:CreateButton({Name="🕊Fly", Callback=function() if flying then stopFly() else startFly() end end})
+    if not (hrp and hum) then notify("Fly","Character not loaded") return end
+    flying=true
+    hum.PlatformStand=true
+    jumpPressed=false
 
--- ================= ESP =================
+    jumpConn = UIS.JumpRequest:Connect(function() if flying then jumpPressed=true end end)
+    local targetY = hrp.Position.Y
+
+    flyConn = RunService.Heartbeat:Connect(function()
+        if not (hrp and hum) then return end
+        local moveDir = hum.MoveDirection*flySpeed
+        local vertical = (targetY-hrp.Position.Y)*10
+        if jumpPressed then vertical=flySpeed targetY=hrp.Position.Y jumpPressed=false
+        elseif UIS:IsKeyDown(Enum.KeyCode.LeftShift) then vertical=-flySpeed targetY=hrp.Position.Y end
+        hrp.Velocity=Vector3.new(moveDir.X,vertical,moveDir.Z)
+        for _,p in pairs(player.Character:GetChildren()) do if p:IsA("BasePart") then p.CanCollide=false end end
+    end)
+    notify("Fly + Noclip","ON")
+end
+
+local function stopFly()
+    if not flying then return end
+    flying=false
+    if flyConn then flyConn:Disconnect() flyConn=nil end
+    if jumpConn then jumpConn:Disconnect() jumpConn=nil end
+    local hum = getHumanoid()
+    if hum then hum.PlatformStand=false end
+    local hrp = getHRP()
+    if hrp then hrp.Velocity=Vector3.zero hrp.RotVelocity=Vector3.zero end
+    local char=player.Character
+    if char then for _,p in pairs(char:GetChildren()) do if p:IsA("BasePart") then p.CanCollide=true end end end
+    notify("Fly + Noclip","OFF")
+end
+
+MainTab:CreateButton({Name="🕊 Fly",Callback=function() if flying then stopFly() else startFly() end end})
+
+-- ================= Visuals Tab =================
 local VisualsTab = Window:CreateTab("👁 Visuals", nil)
 VisualsTab:CreateSection("ESP Features")
 
-local ESP = {Enabled=false, Boxes={}, Tracers={}, Names={}, Health={}, HealthOutline={}, Connections={}}
+local ESPEnabled=false
+local ESPData={}
+local SkeletonData={}
+local espColorMode="Rainbow"
+local customESPColor=Color3.fromRGB(255,0,255)
 
-local function safeNewDrawing(className)
-    local success, result = pcall(Drawing.new, className)
-    return success and result or nil
+local function getESPColor(plr)
+    if espColorMode=="Rainbow" then
+        return Color3.fromHSV((tick()+plr.UserId)%5/5,1,1)
+    elseif espColorMode=="Custom" then
+        return customESPColor
+    else
+        return Color3.fromRGB(255,255,255)
+    end
 end
 
-local function CreateESP(plr)
-    if ESP.Boxes[plr] then return end
-    local char = plr.Character
+local function initESP(plr)
+    if plr==player or ESPData[plr] then return end
+    local char=plr.Character
     if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    local head = char:FindFirstChild("Head")
-    if not hrp or not head then return end
-
-    local box = safeNewDrawing("Square")
-    local tracer = safeNewDrawing("Line")
-    local name = safeNewDrawing("Text")
-    local healthBar = safeNewDrawing("Square")
-    local healthOutline = safeNewDrawing("Square")
-    if not (box and tracer and name and healthBar and healthOutline) then return end
-
-    -- Box
-    box.Visible=false box.Color=Color3.new(1,0,0) box.Thickness=2 box.Filled=false box.Transparency=0.75
-    -- Tracer
-    tracer.Visible=false tracer.Color=Color3.new(0,1,0) tracer.Thickness=1 tracer.Transparency=0.75
-    -- Name
-    name.Visible=false name.Color=Color3.new(1,1,1) name.Size=16 name.Center=true name.Outline=true name.Font=2
-    -- Health
-    healthOutline.Visible=false healthOutline.Filled=true healthOutline.Color=Color3.new(0,0,0)
-    healthBar.Visible=false healthBar.Filled=true healthBar.Color=Color3.new(0,1,0)
-
-    ESP.Boxes[plr]=box
-    ESP.Tracers[plr]=tracer
-    ESP.Names[plr]=name
-    ESP.Health[plr]=healthBar
-    ESP.HealthOutline[plr]=healthOutline
+    local head=char:FindFirstChild("Head")
+    local hum=char:FindFirstChildOfClass("Humanoid")
+    if not (head and hum) then return end
+    local billboard=Instance.new("BillboardGui")
+    billboard.Name="ESP_Billboard"
+    billboard.Adornee=head
+    billboard.Size=UDim2.new(0,120,0,60)
+    billboard.StudsOffset=Vector3.new(0,2.5,0)
+    billboard.AlwaysOnTop=true
+    billboard.Parent=head
+    local healthBG=Instance.new("Frame")
+    healthBG.Size=UDim2.new(0,60,0,6)
+    healthBG.Position=UDim2.new(0.5,-30,0,0)
+    healthBG.BackgroundColor3=Color3.fromRGB(0,0,0)
+    healthBG.BorderSizePixel=1
+    healthBG.Parent=billboard
+    local healthBar=Instance.new("Frame")
+    healthBar.Size=UDim2.new(hum.Health/hum.MaxHealth,0,1,0)
+    healthBar.Position=UDim2.new(0,0,0,0)
+    healthBar.BackgroundColor3=getESPColor(plr)
+    healthBar.BorderSizePixel=0
+    healthBar.Parent=healthBG
+    local nameLabel=Instance.new("TextLabel")
+    nameLabel.Size=UDim2.new(1,0,0,18)
+    nameLabel.Position=UDim2.new(0,0,0,6)
+    nameLabel.BackgroundTransparency=1
+    nameLabel.Text=plr.Name
+    nameLabel.TextColor3=getESPColor(plr)
+    nameLabel.TextStrokeTransparency=0
+    nameLabel.TextScaled=true
+    nameLabel.Parent=billboard
+    local distanceLabel=Instance.new("TextLabel")
+    distanceLabel.Size=UDim2.new(1,0,0,14)
+    distanceLabel.Position=UDim2.new(0,0,0,25)
+    distanceLabel.BackgroundTransparency=1
+    distanceLabel.TextColor3=Color3.fromRGB(200,200,200)
+    distanceLabel.TextStrokeTransparency=0
+    distanceLabel.TextScaled=true
+    distanceLabel.Parent=billboard
+    local box = Drawing.new("Square")
+    box.Thickness=2
+    box.Transparency=1
+    box.Filled=false
+    box.Color=getESPColor(plr)
+    local tracer = Drawing.new("Line")
+    tracer.Thickness=1
+    tracer.Color=getESPColor(plr)
+    ESPData[plr]={char=char,billboard=billboard,healthBar=healthBar,nameLabel=nameLabel,distanceLabel=distanceLabel,box=box,tracer=tracer}
+    SkeletonData[char]={}
 end
 
-local function RemoveESP(plr)
-    if ESP.Boxes[plr] then ESP.Boxes[plr]:Remove() ESP.Boxes[plr]=nil end
-    if ESP.Tracers[plr] then ESP.Tracers[plr]:Remove() ESP.Tracers[plr]=nil end
-    if ESP.Names[plr] then ESP.Names[plr]:Remove() ESP.Names[plr]=nil end
-    if ESP.Health[plr] then ESP.Health[plr]:Remove() ESP.Health[plr]=nil end
-    if ESP.HealthOutline[plr] then ESP.HealthOutline[plr]:Remove() ESP.HealthOutline[plr]=nil end
-end
-
-local function UpdateESP()
-    if not ESP.Enabled then return end
-    for plr, box in pairs(ESP.Boxes) do
-        local char = plr.Character
-        if char and plr~=player then
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            local head = char:FindFirstChild("Head")
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if hrp and head and hum and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                local rootPos, onScreen = camera:WorldToViewportPoint(hrp.Position)
-                local headPos, headOnScreen = camera:WorldToViewportPoint(head.Position)
-                if onScreen and headOnScreen and rootPos.Z>0 then
-                    local height = math.clamp(2000/rootPos.Z,40,350)
-                    local width = height/2
-                    local x, y = rootPos.X, rootPos.Y
-
-                    -- Box
-                    box.Visible=true
-                    box.Size=Vector2.new(width, height)
-                    box.Position=Vector2.new(x-width/2, y-height/2)
-
-                    -- Tracer
-                    local screenSize = camera.ViewportSize
-                    ESP.Tracers[plr].Visible=true
-                    ESP.Tracers[plr].From=Vector2.new(screenSize.X/2, screenSize.Y)
-                    ESP.Tracers[plr].To=Vector2.new(x,y+height/2)
-
-                    -- Name
-                    local dist=(hrp.Position-player.Character.HumanoidRootPart.Position).Magnitude
-                    ESP.Names[plr].Visible=true
-                    ESP.Names[plr].Position=Vector2.new(x, y-height/2-16)
-                    ESP.Names[plr].Text=plr.Name.." ["..math.floor(dist).."m]"
-
-                    -- Health Bar
-                    local maxHP = hum.MaxHealth>0 and hum.MaxHealth or 100
-                    local hp = math.clamp(hum.Health,0,maxHP)
-                    local ratio = hp/maxHP
-                    local barHeight = height
-                    local barWidth = 5
-                    local barX = (x-width/2) - (barWidth+4)
-                    local barY = (y-height/2)
-
-                    ESP.HealthOutline[plr].Visible=true
-                    ESP.HealthOutline[plr].Size=Vector2.new(barWidth+2, barHeight+2)
-                    ESP.HealthOutline[plr].Position=Vector2.new(barX-1, barY-1)
-
-                    ESP.Health[plr].Visible=true
-                    ESP.Health[plr].Size=Vector2.new(barWidth, barHeight*ratio)
-                    ESP.Health[plr].Position=Vector2.new(barX, barY+(barHeight*(1-ratio)))
-                    ESP.Health[plr].Color=Color3.fromRGB(255*(1-ratio),255*ratio,0)
-                else
-                    box.Visible=false ESP.Tracers[plr].Visible=false ESP.Names[plr].Visible=false
-                    ESP.Health[plr].Visible=false ESP.HealthOutline[plr].Visible=false
-                end
-            else
-                box.Visible=false ESP.Tracers[plr].Visible=false ESP.Names[plr].Visible=false
-                ESP.Health[plr].Visible=false ESP.HealthOutline[plr].Visible=false
-            end
-        else
-            box.Visible=false ESP.Tracers[plr].Visible=false ESP.Names[plr].Visible=false
-            ESP.Health[plr].Visible=false ESP.HealthOutline[plr].Visible=false
-        end
+local function removeESP(plr)
+    if ESPData[plr] then
+        local d=ESPData[plr]
+        if d.billboard then d.billboard:Destroy() end
+        if d.box then d.box:Remove() end
+        if d.tracer then d.tracer:Remove() end
+        ESPData[plr]=nil
+    end
+    local char=plr.Character
+    if char and SkeletonData[char] then
+        for _,line in pairs(SkeletonData[char]) do line:Remove() end
+        SkeletonData[char]=nil
     end
 end
 
-local function EnableESP()
-    ESP.Enabled=true
-    for _, plr in pairs(Players:GetPlayers()) do
-        if plr~=player then
-            plr.CharacterAdded:Connect(function() task.wait(0.1) CreateESP(plr) end)
-            if plr.Character then CreateESP(plr) end
-        end
+local function enableESP()
+    ESPEnabled=true
+    for _,plr in pairs(Players:GetPlayers()) do
+        plr.CharacterAdded:Connect(function() task.wait(0.1) initESP(plr) end)
+        if plr.Character then initESP(plr) end
     end
-    ESP.Connections.PlayerAdded = Players.PlayerAdded:Connect(function(plr)
-        if plr~=player then
-            plr.CharacterAdded:Connect(function() task.wait(0.1) CreateESP(plr) end)
-            if plr.Character then CreateESP(plr) end
-        end
+    Players.PlayerAdded:Connect(function(plr)
+        plr.CharacterAdded:Connect(function() task.wait(0.1) initESP(plr) end)
     end)
-    ESP.Connections.PlayerRemoving = Players.PlayerRemoving:Connect(RemoveESP)
-    ESP.Connections.RenderStepped = RunService.RenderStepped:Connect(UpdateESP)
+    Players.PlayerRemoving:Connect(removeESP)
     notify("ESP","ON")
 end
-
-local function DisableESP()
-    ESP.Enabled=false
-    for plr,_ in pairs(ESP.Boxes) do RemoveESP(plr) end
-    if ESP.Connections.PlayerAdded then ESP.Connections.PlayerAdded:Disconnect() ESP.Connections.PlayerAdded=nil end
-    if ESP.Connections.PlayerRemoving then ESP.Connections.PlayerRemoving:Disconnect() ESP.Connections.PlayerRemoving=nil end
-    if ESP.Connections.RenderStepped then ESP.Connections.RenderStepped:Disconnect() ESP.Connections.RenderStepped=nil end
+local function disableESP()
+    ESPEnabled=false
+    for plr,_ in pairs(ESPData) do removeESP(plr) end
     notify("ESP","OFF")
 end
 
-VisualsTab:CreateButton({
-    Name="👁ESP",
-    Callback=function() if ESP.Enabled then DisableESP() else EnableESP() end end
-})
+VisualsTab:CreateButton({Name="👁 Full ESP",Callback=function() if ESPEnabled then disableESP() else enableESP() end end})
 
--- ================= Respawn & Continuous Loop =================
+-- Quick Color Buttons
+VisualsTab:CreateButton({Name="🔴 Red", Callback=function() espColorMode="Custom" customESPColor=Color3.fromRGB(255,0,0) end})
+VisualsTab:CreateButton({Name="⚪ White", Callback=function() espColorMode="Custom" customESPColor=Color3.fromRGB(255,255,255) end})
+VisualsTab:CreateButton({Name="⚫ Black", Callback=function() espColorMode="Custom" customESPColor=Color3.fromRGB(0,0,0) end})
+VisualsTab:CreateButton({Name="🟢 Green", Callback=function() espColorMode="Custom" customESPColor=Color3.fromRGB(0,255,0) end})
+VisualsTab:CreateButton({Name="🌈 Rainbow", Callback=function() espColorMode="Rainbow" end})
+
+-- ESP Update Loop
+RunService.RenderStepped:Connect(function()
+    if not ESPEnabled then return end
+    local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    for plr,data in pairs(ESPData) do
+        local char = data.char
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local head = char and char:FindFirstChild("Head")
+        if char and hum and head then
+            local screenPos,onScreen = camera:WorldToViewportPoint(head.Position)
+            -- Health
+            local ratio = math.clamp(hum.Health/hum.MaxHealth,0,1)
+            data.healthBar.Size = UDim2.new(ratio,0,1,0)
+            data.healthBar.BackgroundColor3 = getESPColor(plr)
+            -- Name & Distance
+            data.nameLabel.Text = plr.Name.." | "..math.floor((head.Position-hrp.Position).Magnitude).."m"
+            data.nameLabel.TextColor3 = getESPColor(plr)
+            -- Box
+            data.box.Position = Vector2.new(screenPos.X-25,screenPos.Y-50)
+            data.box.Size = Vector2.new(50,100)
+            data.box.Color = getESPColor(plr)
+            data.box.Visible = onScreen
+            -- Tracer
+            data.tracer.From = Vector2.new(camera.ViewportSize.X/2,camera.ViewportSize.Y)
+            data.tracer.To = Vector2.new(screenPos.X,screenPos.Y)
+            data.tracer.Color = getESPColor(plr)
+            data.tracer.Visible = onScreen
+        else
+            removeESP(plr)
+        end
+    end
+end)
+
+-- ================= Character Respawn Handling =================
 local function onCharacterAdded(char)
-    updateWalkSpeed()
-    updateJumpPower()
     setupInfiniteJump()
+    updateJumpPower()
     if flying then startFly() end
 end
 player.CharacterAdded:Connect(onCharacterAdded)
 if player.Character then onCharacterAdded(player.Character) end
 
+-- ================= Continuous Enforcement =================
 spawn(function()
     while true do
         RunService.Heartbeat:Wait()
-        local humanoid=player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-        if humanoid then
-            if humanoid.WalkSpeed~=walkSpeed then humanoid.WalkSpeed=walkSpeed end
-            if humanoid.JumpPower~=jumpPower then humanoid.JumpPower=jumpPower end
+        local hum=getHumanoid()
+        if hum then
+            if hum.WalkSpeed~=targetWalkSpeed then hum.WalkSpeed=targetWalkSpeed end
+            if hum.JumpPower~=jumpPower then hum.JumpPower=jumpPower end
         end
         if noclip then
             local char=player.Character
             if char then
-                for _,part in pairs(char:GetChildren()) do
-                    if part:IsA("BasePart") then part.CanCollide=false end
-                end
+                for _,p in pairs(char:GetChildren()) do if p:IsA("BasePart") then p.CanCollide=false end end
             end
         end
     end
