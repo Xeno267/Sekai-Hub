@@ -1,5 +1,5 @@
 99 Night in Force script copy and paste
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Xeno267/Sekai/refs/heads/main/Sekai"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Xeno267/Sekai-Hub/refs/heads/main/Main.lua"))()
 
 
 Subscribe youtube
